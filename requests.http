@@ -1,0 +1,222 @@
+### Tortoise - Event API
+### Open in IntelliJ and click the green arrow next to each request.
+### Restarting the app wipes everything (in-memory storage), so run them top to bottom.
+
+@base = http://localhost:8080
+
+### 1. Create an event -> 201 Created + Location header, status DRAFT
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Al Ahly vs Zamalek",
+  "venue": "Cairo International Stadium",
+  "totalSeats": 500,
+  "registrationOpensAt": "2027-01-01T10:00:00Z",
+  "registrationClosesAt": "2027-01-02T10:00:00Z",
+  "eventStartsAt": "2027-01-10T19:00:00+02:00",
+  "eventEndsAt": "2027-01-10T21:00:00+02:00"
+}
+
+### 2. Same name + venue + day (different letter case) -> 409 DUPLICATE_EVENT
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "AL AHLY VS ZAMALEK",
+  "venue": "cairo international stadium",
+  "totalSeats": 300,
+  "registrationOpensAt": "2027-01-01T10:00:00Z",
+  "registrationClosesAt": "2027-01-02T10:00:00Z",
+  "eventStartsAt": "2027-01-10T15:00:00Z",
+  "eventEndsAt": "2027-01-10T17:00:00Z"
+}
+
+### 3. Field validation -> 400 VALIDATION_FAILED (totalSeats must be >= 1)
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Coding workshop",
+  "venue": "Hall A",
+  "totalSeats": 0,
+  "registrationOpensAt": "2027-02-01T10:00:00Z",
+  "registrationClosesAt": "2027-02-02T10:00:00Z",
+  "eventStartsAt": "2027-02-10T10:00:00Z",
+  "eventEndsAt": "2027-02-10T12:00:00Z"
+}
+
+### 4. Date rules -> 400 (registration must close 24h before start; end must be after start)
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Coding workshop",
+  "venue": "Hall A",
+  "totalSeats": 30,
+  "registrationOpensAt": "2027-02-05T10:00:00Z",
+  "registrationClosesAt": "2027-02-09T10:00:00Z",
+  "eventStartsAt": "2027-02-09T19:00:00Z",
+  "eventEndsAt": "2027-02-09T18:00:00Z"
+}
+
+### 5. Date in the past -> 400 "must be in the future"
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Old concert",
+  "venue": "Opera House",
+  "totalSeats": 100,
+  "registrationOpensAt": "2020-01-01T10:00:00Z",
+  "registrationClosesAt": "2027-02-02T10:00:00Z",
+  "eventStartsAt": "2027-02-10T10:00:00Z",
+  "eventEndsAt": "2027-02-10T12:00:00Z"
+}
+
+### 6. Malformed date -> 400 MALFORMED_REQUEST
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Coding workshop",
+  "venue": "Hall A",
+  "totalSeats": 30,
+  "registrationOpensAt": "tomorrow"
+}
+
+### 7. Get one event -> 200
+GET {{base}}/events/1
+
+### 8. Event that doesn't exist -> 404 EVENT_NOT_FOUND
+GET {{base}}/events/999
+
+### 9. List with date filter and paging -> 200
+GET {{base}}/events?from=2027-01-01&to=2027-01-31&page=0&size=5
+
+### 10. No matches -> 200 with an empty list (not 404!)
+GET {{base}}/events?from=2030-01-01
+
+### 11. Bad paging -> 400
+GET {{base}}/events?page=-1&size=500
+
+### 12. Bad status value -> 400
+GET {{base}}/events?status=banana
+
+### 13. Edit a DRAFT event (any field) -> 200
+PATCH {{base}}/events/1
+Content-Type: application/json
+
+{
+  "totalSeats": 600,
+  "description": "Derby day"
+}
+###
+PATCH {{base}}/events/1
+Content-Type: application/json
+
+{
+  "status": "PUBLISHED"
+}
+
+
+### 14. Publish -> 200, status PUBLISHED
+POST {{base}}/events/1/publish
+
+### 15. Publish again -> 409 INVALID_STATE_TRANSITION
+POST {{base}}/events/1/publish
+
+### 16. Change seats after publishing -> 409 (only description may change)
+PATCH {{base}}/events/1
+Content-Type: application/json
+
+{
+  "totalSeats": 50
+}
+
+### 17. Change description after publishing -> 200
+PATCH {{base}}/events/1
+Content-Type: application/json
+
+{
+  "description": "Gates open at 5 PM"
+}
+
+### 18. Cancel (soft delete, data is kept) -> 200, status CANCELLED
+POST {{base}}/events/1/cancel
+
+### 19. Cancel again -> 409
+POST {{base}}/events/1/cancel
+
+### 20. There is no DELETE -> 405 METHOD_NOT_ALLOWED
+DELETE {{base}}/events/1
+
+### ---------- Review fixes (run after the requests above) ----------
+### Note: the 409 in #2 still used up id 2, just like a database sequence skips a number
+### when an insert fails. So the new "Derby" below gets id 3 and "Concert" gets id 4.
+
+### 21. Create "Derby" again -> 201, id 3 (allowed: event 1 is CANCELLED, so the name is free again)
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Al Ahly vs Zamalek",
+  "venue": "Cairo International Stadium",
+  "totalSeats": 500,
+  "registrationOpensAt": "2027-01-01T10:00:00Z",
+  "registrationClosesAt": "2027-01-02T10:00:00Z",
+  "eventStartsAt": "2027-01-10T19:00:00Z",
+  "eventEndsAt": "2027-01-10T21:00:00Z"
+}
+
+### 22. Try to sneak a status change into PATCH -> 400 VALIDATION_FAILED, hint to use /publish or /cancel
+PATCH {{base}}/events/3
+Content-Type: application/json
+
+{
+  "status": "PUBLISHED"
+}
+
+### 23. Any unknown field is rejected, e.g. the typo "totalSeat" on create -> 400
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Concert",
+  "venue": "Cairo International Stadium",
+  "totalSeat": 100,
+  "registrationOpensAt": "2027-01-01T10:00:00Z",
+  "registrationClosesAt": "2027-01-02T10:00:00Z",
+  "eventStartsAt": "2027-01-10T15:00:00Z",
+  "eventEndsAt": "2027-01-10T17:00:00Z"
+}
+
+### 24. Create "Concert" at the same venue and day -> 201, id 4 (different name, no conflict)
+POST {{base}}/events
+Content-Type: application/json
+
+{
+  "name": "Concert",
+  "venue": "Cairo International Stadium",
+  "totalSeats": 100,
+  "registrationOpensAt": "2027-01-01T10:00:00Z",
+  "registrationClosesAt": "2027-01-02T10:00:00Z",
+  "eventStartsAt": "2027-01-10T15:00:00Z",
+  "eventEndsAt": "2027-01-10T17:00:00Z"
+}
+
+### 25. Rename "Concert" into "Derby" -> 409 DUPLICATE_EVENT
+PATCH {{base}}/events/4
+Content-Type: application/json
+
+{
+  "name": "al ahly vs zamalek"
+}
+
+### 26. Change only the seats of "Derby" -> 200 (an event is never its own duplicate)
+PATCH {{base}}/events/3
+Content-Type: application/json
+
+{
+  "totalSeats": 900
+}
